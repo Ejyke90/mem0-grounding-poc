@@ -24,6 +24,9 @@ ENV/
 # Mem0 local storage
 .data/
 
+# Eval reports
+evals_report*.json
+
 # OS
 .DS_Store
 Thumbs.db

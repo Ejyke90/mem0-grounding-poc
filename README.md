@@ -239,6 +239,12 @@ src/
     email.py                 # Email sync endpoint (REST counterpart to MCP)
   worker/
     synthesizer.py           # Background synthesis (sleeptime-inspired)
+  evals/
+    dataset.py               # Golden eval cases keyed to the mock corpus
+    scoring.py               # Deterministic scorers (tool selection, keywords)
+    judge.py                 # LLM-as-judge for groundedness (Ollama)
+    runner.py                # CLI runner + JSON report
+tests/                       # Unit tests (all mocked, no credentials needed)
 demo.py                      # Full lifecycle demo script
 ```
 
@@ -256,6 +262,39 @@ demo.py                      # Full lifecycle demo script
 
 6. **MCP as the integration surface.** The same fetch/archive/ingest/search/add tools are available to any MCP client (Claude Desktop, `mcp` CLI, or a custom agent gateway) without that client ever touching IMAP or object storage credentials directly.
 
+## Evals
+
+The eval pipeline measures whether the agent actually picks the right tools
+and grounds its answers in the retrieved memory, not just whether it responds.
+
+```bash
+python -m src.evals.runner                  # full run (seeds corpus, runs 8 cases, LLM judge)
+python -m src.evals.runner --no-judge       # deterministic metrics only, faster
+python -m src.evals.runner --case manager-1on1   # run a single case
+python -m src.evals.runner --out report.json
+```
+
+Per-case metrics (0-1):
+
+- **tool_selection** -- did the agent call `search_memory` for personal
+  questions, `add_memory` for stated preferences, and *neither* for general
+  questions? Deterministic, no LLM needed.
+- **answer_keywords** -- does the final answer contain expected facts from
+  the seeded corpus (e.g. "sarah", "october 10")? Deterministic.
+- **judge_score** -- LLM-as-judge groundedness score (1-5) using the same
+  Ollama model. Off by default for negative cases; skip entirely with
+  `--no-judge`.
+
+The dataset lives in `src/evals/dataset.py` -- 8 cases covering retrieval,
+write, and negative paths, all keyed to the mock corpus in
+`src/ingestion/seed.py`. Exits 0 on 100% pass, 1 otherwise (CI-friendly).
+Report lands in `evals_report.json` (gitignored).
+
+Honest caveat for the PoC: `llama3.2` is a 3B model and its tool calling is
+best-effort. Expect eval runs to occasionally drop below 100% on
+`tool_selection`; that's the eval pipeline doing its job, not a bug in the
+agent code.
+
 ## Tests
 
 ```bash
@@ -263,9 +302,10 @@ pip install -e ".[dev]"
 pytest
 ```
 
-Tests mock the Gmail API (`googleapiclient`), Yahoo token endpoints (`httpx`),
-IMAP (`imaplib`), and S3 (`boto3`) so the whole suite runs without real
-credentials or network access.
+43 unit tests covering the IMAP parser, Gmail API fetcher, Yahoo XOAUTH2
+flow, OAuth token refresh, auth-method dispatcher, object storage, and eval
+scoring. All mocked (imaplib, boto3, googleapiclient, httpx), so the suite
+runs with no credentials or network.
 
 ## Next Steps (Production)
 
