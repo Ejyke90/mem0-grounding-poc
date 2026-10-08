@@ -22,8 +22,7 @@ ENV/
 .env
 
 # Mem0 local storage
-/tmp/qdrant/
-~/.mem0/
+.data/
 
 # OS
 .DS_Store

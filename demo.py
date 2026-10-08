@@ -1,4 +1,4 @@
-"""Interactive demo: shows the full lifecycle of Mem0 + LangGraph personal grounding.
+"""Interactive demo: shows the full lifecycle of Mem0 + LangGraph personalization.
 
 Run: python demo.py
 
@@ -9,16 +9,19 @@ This script:
 """
 
 import os
+import httpx
 import sys
 
-# Ensure OPENAI_API_KEY is set
-if not os.environ.get("OPENAI_API_KEY"):
-    from dotenv import load_dotenv
+# Disable Mem0 telemetry to avoid a second Qdrant client fighting for file locks
+os.environ["MEM0_TELEMETRY"] = "false"
 
-    load_dotenv()
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("Error: OPENAI_API_KEY not set. Create a .env file or export it.")
-        sys.exit(1)
+# Check that Ollama is running
+try:
+    resp = httpx.get("http://localhost:11434/api/tags", timeout=5)
+    resp.raise_for_status()
+except Exception:
+    print("Error: Ollama is not running. Start it with: ollama serve")
+    sys.exit(1)
 
 from langchain_core.messages import HumanMessage
 
@@ -29,7 +32,7 @@ from src.worker.synthesizer import synthesize_user_profile
 
 def run_demo():
     print("=" * 70)
-    print("  Mem0 Personal Grounding PoC - Interactive Demo")
+    print("  Mem0 Personalization PoC - Interactive Demo")
     print("=" * 70)
 
     # Step 1: Seed data

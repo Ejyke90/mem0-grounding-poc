@@ -1,6 +1,6 @@
 # mem0-grounding-poc
 
-Proof of concept: **Mem0 memory layer** integrated with a **LangGraph agent** for personal grounding.
+Proof of concept: **Mem0 memory layer** integrated with a **LangGraph agent** for personalization.
 
 Demonstrates the full lifecycle:
 1. **Ingest** personal data from email, calendar, Webex, and Slack into Mem0
@@ -10,7 +10,7 @@ Demonstrates the full lifecycle:
 ## Architecture
 
 ```
-Personal Grounding Sources (email, calendar, Webex, Slack)
+Personalization Sources (email, calendar, Webex, Slack)
         |
         | ingest -> mem0.add()
         v
@@ -35,26 +35,24 @@ and `add_memory` when the user shares a durable fact.
 ### Prerequisites
 
 - Python 3.11+
-- An OpenAI API key
+- [Ollama](https://ollama.com) installed and running (completely free, runs locally)
 
 ### Setup
 
 ```bash
-# Clone
+# 1. Install Ollama models (one-time)
+ollama pull llama3.2           # 3B param, supports tool calling
+ollama pull nomic-embed-text   # embedding model for Mem0
+
+# 2. Clone and install
 git clone https://github.com/Ejyke90/mem0-grounding-poc.git
 cd mem0-grounding-poc
-
-# Create virtual environment
 python -m venv .venv
 source .venv/bin/activate  # or .venv\Scripts\activate on Windows
-
-# Install
 pip install -e .
-
-# Configure
-cp .env.example .env
-# Edit .env and add your OPENAI_API_KEY
 ```
+
+No API keys needed. Everything runs locally via Ollama.
 
 ### Run the Demo
 
@@ -112,7 +110,7 @@ python -m src.worker.synthesizer
 
 ```
 src/
-  config.py                  # Pydantic settings (OpenAI key, Mem0 config)
+  config.py                  # Pydantic settings (Ollama URL, Mem0 config)
   main.py                    # FastAPI app
   agent/
     memory_store.py          # Mem0 singleton initialization
@@ -132,7 +130,7 @@ demo.py                      # Full lifecycle demo script
 
 ## What This Proves
 
-1. **Mem0 as a drop-in memory layer.** `pip install mem0ai`, call `Memory()`, and you have persistent user-scoped memory with hybrid retrieval (semantic + BM25 + entity linking).
+1. **Mem0 as a drop-in memory layer.** `pip install mem0ai`, configure Ollama as the provider, and you have persistent user-scoped memory with hybrid retrieval. No API keys, no cloud dependency.
 
 2. **Agent-driven retrieval.** The agent decides when to use memory, not a proxy. `search_memory` and `add_memory` are LangChain tools in the LangGraph tool registry, same pattern as any other tool.
 

@@ -1,5 +1,9 @@
 """FastAPI application: mem0-grounding-poc."""
 
+import os
+
+os.environ.setdefault("MEM0_TELEMETRY", "false")
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -7,8 +11,8 @@ from src.config import settings
 from src.routers import health, chat, memory
 
 app = FastAPI(
-    title="Mem0 Personal Grounding PoC",
-    description="LangGraph agent with Mem0 memory tools for personal context grounding",
+    title="Mem0 Personalization PoC",
+    description="LangGraph agent with Mem0 memory tools for personalization",
     version="0.1.0",
 )
 

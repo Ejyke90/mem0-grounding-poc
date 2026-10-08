@@ -8,7 +8,7 @@ decides when personal context is useful and retrieves it on demand.
 from typing import Annotated, TypedDict
 
 from langchain_core.messages import BaseMessage, SystemMessage
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 
@@ -52,10 +52,11 @@ class AgentState(TypedDict):
 def create_orchestrator():
     """Create and compile the LangGraph orchestrator."""
 
-    llm = ChatOpenAI(
+    llm = ChatOllama(
         model=settings.llm_model,
         temperature=0.2,
-        max_tokens=2048,
+        num_predict=2048,
+        base_url=settings.ollama_base_url,
     )
     llm_with_tools = llm.bind_tools(TOOLS)
 

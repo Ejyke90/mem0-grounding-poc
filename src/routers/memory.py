@@ -39,7 +39,7 @@ async def add_memory_direct(request: AddMemoryRequest) -> dict:
 async def search_memory_direct(request: SearchMemoryRequest) -> dict:
     """Search memories directly in Mem0 (bypasses the agent)."""
     mem = get_memory()
-    results = mem.search(request.query, user_id=request.user_id)
+    results = mem.search(request.query, filters={"user_id": request.user_id})
 
     if isinstance(results, dict) and "results" in results:
         memories = results["results"]
@@ -55,7 +55,7 @@ async def search_memory_direct(request: SearchMemoryRequest) -> dict:
 async def get_all_memories(user_id: str) -> dict:
     """Get all memories for a user."""
     mem = get_memory()
-    results = mem.get_all(user_id=user_id)
+    results = mem.get_all(filters={"user_id": user_id})
 
     if isinstance(results, dict) and "results" in results:
         memories = results["results"]

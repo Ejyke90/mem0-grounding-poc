@@ -7,7 +7,7 @@ Letta's sleeptime compute pattern.
 Usage: python -m src.worker.synthesizer
 """
 
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 
 from src.agent.memory_store import get_memory
 from src.config import settings
@@ -17,7 +17,7 @@ def synthesize_user_profile(user_id: str) -> list[dict]:
     """Read all memories for a user, cluster them, and synthesize profile facts."""
 
     mem = get_memory()
-    all_memories = mem.get_all(user_id=user_id)
+    all_memories = mem.get_all(filters={"user_id": user_id})
 
     if isinstance(all_memories, dict) and "results" in all_memories:
         memories = all_memories["results"]
@@ -51,7 +51,12 @@ def synthesize_user_profile(user_id: str) -> list[dict]:
     context = "\n".join(memory_texts)
 
     # Use the LLM to synthesize profile-level facts
-    llm = ChatOpenAI(model=settings.llm_model, temperature=0.1, max_tokens=1024)
+    llm = ChatOllama(
+        model=settings.llm_model,
+        temperature=0.1,
+        num_predict=1024,
+        base_url=settings.ollama_base_url,
+    )
 
     synthesis_prompt = f"""You are a personal knowledge synthesizer. Given the following raw memories
 from a user's emails, calendar, Slack, and Webex, extract 3-7 durable profile-level facts.

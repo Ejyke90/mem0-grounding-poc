@@ -1,7 +1,7 @@
 """Mem0 memory store singleton.
 
 Initializes Mem0 once and exposes it to the rest of the application.
-In dev mode this uses local Qdrant (on-disk) and SQLite history.
+Uses Qdrant in-memory mode for the PoC (no file locks).
 In production, swap to pgvector via Memory.from_config().
 """
 
@@ -18,16 +18,28 @@ def get_memory() -> Memory:
     if _memory is None:
         config = {
             "llm": {
-                "provider": "openai",
+                "provider": "ollama",
                 "config": {
                     "model": settings.mem0_llm_model,
                     "temperature": 0.1,
+                    "ollama_base_url": settings.ollama_base_url,
                 },
             },
             "embedder": {
-                "provider": "openai",
+                "provider": "ollama",
                 "config": {
                     "model": settings.mem0_embedding_model,
+                    "ollama_base_url": settings.ollama_base_url,
+                    "embedding_dims": 768,
+                },
+            },
+            "vector_store": {
+                "provider": "qdrant",
+                "config": {
+                    "embedding_model_dims": 768,
+                    "collection_name": "mem0_grounding",
+                    "path": ":memory:",
+                    "on_disk": False,
                 },
             },
         }

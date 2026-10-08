@@ -25,7 +25,7 @@ def search_memory(query: str, user_id: str) -> list[dict]:
         List of relevant memories, each with 'memory' text and 'metadata'.
     """
     mem = get_memory()
-    results = mem.search(query, user_id=user_id)
+    results = mem.search(query, filters={"user_id": user_id})
 
     # Normalize: mem0 v2 returns {"results": [...]} or a list directly
     if isinstance(results, dict) and "results" in results:
