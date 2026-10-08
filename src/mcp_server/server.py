@@ -1,10 +1,15 @@
 """MCP server: email ingestion + Mem0 personalization memory, exposed as tools.
 
 Lets any MCP client (Claude Desktop, the `mcp` CLI, or your own agent gateway)
-fetch Gmail/Yahoo email over IMAP, archive the raw messages to free
-S3-compatible object storage, store them as searchable memories in Mem0, and
-search/add personalization facts, all without the client ever handling
-credentials directly.
+fetch Gmail/Yahoo email, archive the raw messages to free S3-compatible object
+storage, store them as searchable memories in Mem0, and search/add
+personalization facts, all without the client ever handling credentials
+directly.
+
+Email auth defaults to OAuth2 when configured (Gmail API / Yahoo XOAUTH2),
+falling back to IMAP app passwords. Run the one-time OAuth flow first:
+    python -m src.ingestion.email_sources.oauth_flow --provider gmail
+    python -m src.ingestion.email_sources.oauth_flow --provider yahoo
 
 Run:
     python -m src.mcp_server.server              # stdio transport
@@ -25,22 +30,29 @@ from mcp.server.fastmcp import FastMCP
 
 from src.agent.memory_tools import add_memory, search_memory
 from src.ingestion.adapters import ingest_email
-from src.ingestion.email_sources.imap_client import fetch_recent_emails
+from src.ingestion.email_sources import fetch_emails as _fetch_emails
 from src.storage.object_store import list_archived_emails, upload_email_archive
 
 mcp = FastMCP("mem0-personalization")
 
 Provider = Literal["gmail", "yahoo"]
+AuthMethod = Literal["auto", "oauth2", "app_password"]
 
 
 @mcp.tool()
-def fetch_emails(provider: Provider, max_results: int = 10) -> list[dict]:
-    """Fetch recent emails from Gmail or Yahoo Mail over IMAP (read-only).
+def fetch_emails(
+    provider: Provider,
+    max_results: int = 10,
+    auth_method: AuthMethod = "auto",
+) -> list[dict]:
+    """Fetch recent emails from Gmail or Yahoo Mail (read-only).
 
-    Credentials come from the server's .env file, never from the caller.
-    Returns raw email dicts with subject, sender, date, and body.
+    Uses OAuth2 when configured and authorized, otherwise IMAP app passwords.
+    Credentials come from the server's .env file and cached OAuth tokens,
+    never from the caller. Returns raw email dicts with subject, sender,
+    date, and body.
     """
-    return fetch_recent_emails(provider=provider, max_results=max_results)
+    return _fetch_emails(provider=provider, max_results=max_results, auth_method=auth_method)
 
 
 @mcp.tool()
@@ -71,15 +83,21 @@ def ingest_emails_to_memory(user_id: str, emails: list[dict]) -> dict:
 
 @mcp.tool()
 def sync_mailbox(
-    provider: Provider, user_id: str, max_results: int = 10, archive: bool = True
+    provider: Provider,
+    user_id: str,
+    max_results: int = 10,
+    archive: bool = True,
+    auth_method: AuthMethod = "auto",
 ) -> dict:
     """Fetch, archive, and ingest a mailbox in one call.
 
-    This is the end-to-end flow: IMAP fetch -> object storage archive ->
-    Mem0 ingestion. Use the individual tools instead if you need to inspect
-    or filter emails between steps.
+    This is the end-to-end flow: email fetch (OAuth2 or IMAP) -> object
+    storage archive -> Mem0 ingestion. Use the individual tools instead if
+    you need to inspect or filter emails between steps.
     """
-    emails = fetch_recent_emails(provider=provider, max_results=max_results)
+    emails = _fetch_emails(
+        provider=provider, max_results=max_results, auth_method=auth_method
+    )
     archived_keys = [upload_email_archive(user_id, e) for e in emails] if archive else []
     ingested = [
         ingest_email(user_id, e["subject"], e["sender"], e["body"], e["date"]) for e in emails

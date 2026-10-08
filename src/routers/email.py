@@ -1,7 +1,10 @@
-"""Email ingestion endpoints: IMAP fetch -> object storage archive -> Mem0.
+"""Email ingestion endpoints: fetch -> object storage archive -> Mem0.
 
 REST counterpart to the tools exposed in src/mcp_server/server.py, useful
 for testing the pipeline without an MCP client.
+
+Auth defaults to OAuth2 when configured (Gmail API / Yahoo XOAUTH2), falling
+back to IMAP app passwords.
 """
 
 from typing import Literal
@@ -10,7 +13,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.ingestion.adapters import ingest_email
-from src.ingestion.email_sources.imap_client import fetch_recent_emails
+from src.ingestion.email_sources import fetch_emails
 from src.storage.object_store import list_archived_emails, upload_email_archive
 
 router = APIRouter(prefix="/email", tags=["email"])
@@ -21,13 +24,18 @@ class SyncMailboxRequest(BaseModel):
     user_id: str = "demo-user"
     max_results: int = 10
     archive: bool = True
+    auth_method: Literal["auto", "oauth2", "app_password"] = "auto"
 
 
 @router.post("/sync")
 async def sync_mailbox(request: SyncMailboxRequest) -> dict:
     """Fetch recent emails, archive them to object storage, and ingest into Mem0."""
     try:
-        emails = fetch_recent_emails(provider=request.provider, max_results=request.max_results)
+        emails = fetch_emails(
+            provider=request.provider,
+            max_results=request.max_results,
+            auth_method=request.auth_method,
+        )
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

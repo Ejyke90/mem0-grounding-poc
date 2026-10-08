@@ -9,8 +9,9 @@ import pytest
 
 from src.ingestion.email_sources.imap_client import (
     PROVIDER_HOSTS,
-    _extract_body,
+    extract_body,
     fetch_recent_emails,
+    parse_raw_message,
 )
 
 
@@ -66,8 +67,18 @@ def test_fetch_recent_emails_parses_messages(monkeypatch):
     mock_conn.select.assert_called_once_with("INBOX", readonly=True)
 
 
+def test_parse_raw_message_normalizes_fields():
+    raw = _make_raw_email("Hello", "alice@example.com", "Body here")
+    parsed = parse_raw_message(raw, "fallback-id")
+    assert parsed["subject"] == "Hello"
+    assert parsed["sender"] == "alice@example.com"
+    assert "Body here" in parsed["body"]
+    assert parsed["message_id"] == "<test-123@example.com>"
+    assert parsed["date"]
+
+
 def test_extract_body_prefers_plain_text():
     msg = EmailMessage()
     msg.set_content("plain text body")
     msg.add_alternative("<p>html body</p>", subtype="html")
-    assert "plain text body" in _extract_body(msg)
+    assert "plain text body" in extract_body(msg)

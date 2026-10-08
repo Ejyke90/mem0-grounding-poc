@@ -112,23 +112,49 @@ python -m src.worker.synthesizer
 
 ## Email Ingestion + Object Storage + MCP
 
-Fetches real email from Gmail or Yahoo over IMAP, archives the raw messages to
-free object storage, and stores them as searchable Mem0 memories.
+Fetches real email from Gmail or Yahoo via OAuth2 (with an IMAP app-password
+fallback), archives the raw messages to free object storage, and stores them
+as searchable Mem0 memories.
 
-### 1. Generate IMAP app passwords (not your login password)
+### 1. Set up OAuth2 (recommended, one time per provider)
 
-- **Gmail**: enable 2-Step Verification, then create one at
-  https://myaccount.google.com/apppasswords
-- **Yahoo**: https://login.yahoo.com/account/security -> "Generate app password"
+**Gmail (Gmail API + OAuth client):**
+1. Google Cloud Console -> create/select a project -> enable the **Gmail API**
+2. APIs & Services -> OAuth consent screen -> External -> fill in app name/email
+3. Credentials -> "Create OAuth client ID" -> type **Desktop app**
+4. Add to `.env`:
+   ```bash
+   GOOGLE_CLIENT_ID=...apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=...
+   ```
+5. Authorize once (opens a browser, caches the token in `.data/tokens/`):
+   ```bash
+   python -m src.ingestion.email_sources.oauth_flow --provider gmail
+   ```
 
-Add to `.env`:
-```bash
-GMAIL_USER=you@gmail.com
-GMAIL_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
-# or
-YAHOO_USER=you@yahoo.com
-YAHOO_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
-```
+**Yahoo (OAuth2 + XOAUTH2 over IMAP):**
+1. https://developer.yahoo.com -> Create App -> enable **Mail (Read)** scope
+2. Set the redirect URI to `http://localhost:8765/callback`
+   (or use `oob` and set `YAHOO_REDIRECT_URI=oob`; Yahoo will show a code to paste)
+3. Add to `.env`:
+   ```bash
+   YAHOO_CLIENT_ID=...
+   YAHOO_CLIENT_SECRET=...
+   YAHOO_USER=you@yahoo.com
+   ```
+4. Authorize once:
+   ```bash
+   python -m src.ingestion.email_sources.oauth_flow --provider yahoo
+   ```
+
+After the one-time auth, tokens refresh automatically -- fetches are
+non-interactive from then on.
+
+**Fallback (no OAuth configured):** app passwords still work over plain IMAP.
+Gmail: https://myaccount.google.com/apppasswords -> set `GMAIL_USER` +
+`GMAIL_APP_PASSWORD`. Yahoo: login.yahoo.com/account/security -> "Generate
+app password" -> set `YAHOO_USER` + `YAHOO_APP_PASSWORD`. The `auto` auth
+method (default) picks OAuth2 when available and falls back to IMAP.
 
 ### 2. Set up free object storage
 
@@ -154,7 +180,7 @@ Via REST:
 ```bash
 curl -X POST http://localhost:8000/email/sync \
   -H "Content-Type: application/json" \
-  -d '{"provider": "gmail", "user_id": "demo-user", "max_results": 10}'
+  -d '{"provider": "gmail", "user_id": "demo-user", "max_results": 10, "auth_method": "oauth2"}'
 ```
 
 Via the MCP server (any MCP client, e.g. Claude Desktop or the `mcp` CLI):
@@ -178,7 +204,9 @@ Example Claude Desktop config (`claude_desktop_config.json`):
 
 MCP tools exposed: `fetch_emails`, `archive_emails`, `list_email_archive`,
 `ingest_emails_to_memory`, `sync_mailbox` (does all three in one call),
-`search_personal_memory`, `add_personal_memory`.
+`search_personal_memory`, `add_personal_memory`. `fetch_emails` and
+`sync_mailbox` accept an `auth_method` argument (`auto` | `oauth2` |
+`app_password`; default `auto`).
 
 ## Project Structure
 
@@ -194,7 +222,12 @@ src/
     adapters.py              # Source adapters: email, calendar, Slack, Webex
     seed.py                  # Mock data seeder
     email_sources/
-      imap_client.py         # Gmail/Yahoo IMAP fetcher (app password auth)
+      fetcher.py             # Auth-method dispatcher (OAuth2 vs app password)
+      oauth_manager.py       # Token cache + refresh, Gmail & Yahoo
+      gmail_client.py        # Gmail API fetcher (OAuth2)
+      yahoo_oauth_client.py  # Yahoo fetcher (XOAUTH2 over IMAP)
+      imap_client.py         # Shared parsing + IMAP app-password fallback
+      oauth_flow.py          # CLI: one-time interactive OAuth authorization
   storage/
     object_store.py          # S3-compatible archive (Cloudflare R2 / B2 / MinIO)
   mcp_server/
@@ -219,7 +252,7 @@ demo.py                      # Full lifecycle demo script
 
 4. **Background synthesis works.** A simple LLM-based synthesis pass reads raw memories and produces durable profile-level facts, similar to Letta's sleeptime compute but without the framework overhead.
 
-5. **Real email ingestion with zero paid infrastructure.** Gmail/Yahoo over IMAP (app passwords, no OAuth app registration), Mem0 for searchable memory, and any S3-compatible free tier for raw archival. No managed queue, no managed API gateway.
+5. **Real email ingestion with zero paid infrastructure.** Gmail via the Gmail API and Yahoo via XOAUTH2, both with proper OAuth2 refresh-token handling and a one-time browser auth (plus an IMAP app-password fallback). Mem0 for searchable memory, any S3-compatible free tier for raw archival. No managed queue, no managed API gateway.
 
 6. **MCP as the integration surface.** The same fetch/archive/ingest/search/add tools are available to any MCP client (Claude Desktop, `mcp` CLI, or a custom agent gateway) without that client ever touching IMAP or object storage credentials directly.
 
@@ -230,7 +263,9 @@ pip install -e ".[dev]"
 pytest
 ```
 
-Tests mock IMAP (`imaplib`) and S3 (`boto3`) so they run without real credentials.
+Tests mock the Gmail API (`googleapiclient`), Yahoo token endpoints (`httpx`),
+IMAP (`imaplib`), and S3 (`boto3`) so the whole suite runs without real
+credentials or network access.
 
 ## Next Steps (Production)
 
