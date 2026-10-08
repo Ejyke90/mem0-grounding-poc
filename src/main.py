@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.config import settings
-from src.routers import health, chat, memory
+from src.routers import chat, email, health, memory
 
 app = FastAPI(
     title="Mem0 Personalization PoC",
@@ -27,6 +27,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(chat.router)
 app.include_router(memory.router)
+app.include_router(email.router)
 
 
 if __name__ == "__main__":

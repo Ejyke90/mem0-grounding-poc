@@ -3,28 +3,30 @@
 Proof of concept: **Mem0 memory layer** integrated with a **LangGraph agent** for personalization.
 
 Demonstrates the full lifecycle:
-1. **Ingest** personal data from email, calendar, Webex, and Slack into Mem0
-2. **Synthesize** durable profile facts via a background worker (sleeptime-inspired)
-3. **Retrieve** personal context on demand through agent-driven tool calls
+1. **Ingest** personal data from email (Gmail/Yahoo via IMAP), calendar, Webex, and Slack into Mem0
+2. **Archive** raw emails to free S3-compatible object storage (Cloudflare R2, Backblaze B2, or MinIO)
+3. **Synthesize** durable profile facts via a background worker (sleeptime-inspired)
+4. **Retrieve** personal context on demand through agent-driven tool calls, or expose the same tools over MCP
 
 ## Architecture
 
 ```
-Personalization Sources (email, calendar, Webex, Slack)
-        |
-        | ingest -> mem0.add()
-        v
-+-------------------+
-| Mem0 Memory Store |  (local Qdrant + SQLite)
-+-------------------+
-        ^
-        | tool calls: search_memory() / add_memory()
-        |
-LangGraph Orchestrator
-        |
-        +-- search_memory: agent retrieves personal context on demand
-        +-- add_memory: agent stores new facts from conversation
+Gmail / Yahoo (IMAP)  --fetch-->  [raw emails]
+                                        |
+                                        +--> Object Storage (R2/B2/MinIO)  [archive, raw JSON]
+                                        |
+                                        +--> Mem0 Memory Store              [ingest, mem0.add()]
+                                                     ^
+                                                     | tool calls: search_memory() / add_memory()
+                                                     |
+                               +---------------------+---------------------+
+                               |                                           |
+                     LangGraph Orchestrator                        MCP Server (stdio)
+                     (agent-driven tool use)                (any MCP client: Claude Desktop, etc.)
 ```
+
+Calendar, Slack, and Webex still ingest via the mock adapters in `src/ingestion/adapters.py`
+(same pattern as email, just without a live IMAP/API source wired up yet).
 
 The agent decides when memory is useful. No proxy, no silent injection.
 The LLM calls `search_memory` when a question benefits from personal context,
@@ -95,6 +97,8 @@ Endpoints:
 - `POST /memory/add` - add a memory directly
 - `POST /memory/search` - search memories directly
 - `GET /memory/all/{user_id}` - list all memories for a user
+- `POST /email/sync` - fetch Gmail/Yahoo over IMAP, archive to object storage, ingest to Mem0
+- `GET /email/archive/{user_id}` - list a user's archived email object keys
 
 ### Run Individual Components
 
@@ -106,11 +110,81 @@ python -m src.ingestion.seed
 python -m src.worker.synthesizer
 ```
 
+## Email Ingestion + Object Storage + MCP
+
+Fetches real email from Gmail or Yahoo over IMAP, archives the raw messages to
+free object storage, and stores them as searchable Mem0 memories.
+
+### 1. Generate IMAP app passwords (not your login password)
+
+- **Gmail**: enable 2-Step Verification, then create one at
+  https://myaccount.google.com/apppasswords
+- **Yahoo**: https://login.yahoo.com/account/security -> "Generate app password"
+
+Add to `.env`:
+```bash
+GMAIL_USER=you@gmail.com
+GMAIL_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+# or
+YAHOO_USER=you@yahoo.com
+YAHOO_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+```
+
+### 2. Set up free object storage
+
+Any S3-compatible provider works via `boto3`. Two free options:
+
+- **Cloudflare R2** (recommended: 10 GB storage, zero egress fees) -- create a
+  bucket and API token at https://dash.cloudflare.com -> R2
+- **Backblaze B2** (10 GB free) -- create a bucket and application key at
+  https://www.backblaze.com/b2
+
+Add to `.env`:
+```bash
+OBJECT_STORAGE_ENDPOINT_URL=https://<account_id>.r2.cloudflarestorage.com
+OBJECT_STORAGE_ACCESS_KEY=...
+OBJECT_STORAGE_SECRET_KEY=...
+OBJECT_STORAGE_BUCKET=mem0-email-archive
+OBJECT_STORAGE_REGION=auto
+```
+
+### 3. Sync a mailbox
+
+Via REST:
+```bash
+curl -X POST http://localhost:8000/email/sync \
+  -H "Content-Type: application/json" \
+  -d '{"provider": "gmail", "user_id": "demo-user", "max_results": 10}'
+```
+
+Via the MCP server (any MCP client, e.g. Claude Desktop or the `mcp` CLI):
+```bash
+python -m src.mcp_server.server       # stdio transport
+mcp dev src/mcp_server/server.py      # MCP Inspector, for interactive debugging
+```
+
+Example Claude Desktop config (`claude_desktop_config.json`):
+```json
+{
+  "mcpServers": {
+    "mem0-personalization": {
+      "command": "/absolute/path/to/mem0-grounding-poc/.venv/bin/python",
+      "args": ["-m", "src.mcp_server.server"],
+      "cwd": "/absolute/path/to/mem0-grounding-poc"
+    }
+  }
+}
+```
+
+MCP tools exposed: `fetch_emails`, `archive_emails`, `list_email_archive`,
+`ingest_emails_to_memory`, `sync_mailbox` (does all three in one call),
+`search_personal_memory`, `add_personal_memory`.
+
 ## Project Structure
 
 ```
 src/
-  config.py                  # Pydantic settings (Ollama URL, Mem0 config)
+  config.py                  # Pydantic settings (Ollama, Mem0, IMAP, object storage)
   main.py                    # FastAPI app
   agent/
     memory_store.py          # Mem0 singleton initialization
@@ -119,10 +193,17 @@ src/
   ingestion/
     adapters.py              # Source adapters: email, calendar, Slack, Webex
     seed.py                  # Mock data seeder
+    email_sources/
+      imap_client.py         # Gmail/Yahoo IMAP fetcher (app password auth)
+  storage/
+    object_store.py          # S3-compatible archive (Cloudflare R2 / B2 / MinIO)
+  mcp_server/
+    server.py                # MCP server: email + memory tools over stdio
   routers/
     health.py                # Health check endpoint
     chat.py                  # Chat endpoint (agent + memory)
     memory.py                # Direct memory CRUD endpoints
+    email.py                 # Email sync endpoint (REST counterpart to MCP)
   worker/
     synthesizer.py           # Background synthesis (sleeptime-inspired)
 demo.py                      # Full lifecycle demo script
@@ -137,6 +218,19 @@ demo.py                      # Full lifecycle demo script
 3. **Source-agnostic ingestion.** The same `mem0.add()` call works for emails, calendar events, Slack messages, and Webex messages. Metadata tags track the source.
 
 4. **Background synthesis works.** A simple LLM-based synthesis pass reads raw memories and produces durable profile-level facts, similar to Letta's sleeptime compute but without the framework overhead.
+
+5. **Real email ingestion with zero paid infrastructure.** Gmail/Yahoo over IMAP (app passwords, no OAuth app registration), Mem0 for searchable memory, and any S3-compatible free tier for raw archival. No managed queue, no managed API gateway.
+
+6. **MCP as the integration surface.** The same fetch/archive/ingest/search/add tools are available to any MCP client (Claude Desktop, `mcp` CLI, or a custom agent gateway) without that client ever touching IMAP or object storage credentials directly.
+
+## Tests
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+Tests mock IMAP (`imaplib`) and S3 (`boto3`) so they run without real credentials.
 
 ## Next Steps (Production)
 

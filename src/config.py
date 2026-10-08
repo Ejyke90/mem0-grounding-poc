@@ -15,5 +15,18 @@ class Settings(BaseSettings):
     mem0_llm_model: str = "llama3.2"
     mem0_embedding_model: str = "nomic-embed-text"
 
+    # Email ingestion (IMAP + app password, not your main account password)
+    gmail_user: str = ""
+    gmail_app_password: str = ""
+    yahoo_user: str = ""
+    yahoo_app_password: str = ""
+
+    # Object storage (any S3-compatible free tier: Cloudflare R2, Backblaze B2, MinIO)
+    object_storage_endpoint_url: str = ""
+    object_storage_access_key: str = ""
+    object_storage_secret_key: str = ""
+    object_storage_bucket: str = ""
+    object_storage_region: str = "auto"
+
 
 settings = Settings()

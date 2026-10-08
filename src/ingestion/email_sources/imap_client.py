@@ -1,0 +1,120 @@
+"""Generic IMAP email fetcher for Gmail and Yahoo Mail.
+
+Both providers expose IMAP access through an "app password" rather than your
+main account password:
+
+  Gmail:  https://myaccount.google.com/apppasswords  (requires 2-Step Verification)
+  Yahoo:  https://login.yahoo.com/account/security -> "Generate app password"
+
+Credentials are read from environment variables only (see .env.example) and
+are never accepted as tool/function arguments, so they can't leak into agent
+conversation logs or MCP tool-call traces.
+"""
+
+from __future__ import annotations
+
+import email
+import imaplib
+from email.header import decode_header
+from email.message import Message
+from email.utils import parsedate_to_datetime
+
+from src.config import settings
+
+PROVIDER_HOSTS = {
+    "gmail": "imap.gmail.com",
+    "yahoo": "imap.mail.yahoo.com",
+}
+
+_MAX_BODY_CHARS = 5000
+
+
+def _decode_header_value(value: str | None) -> str:
+    if not value:
+        return ""
+    parts = decode_header(value)
+    return "".join(
+        part.decode(encoding or "utf-8", errors="replace") if isinstance(part, bytes) else part
+        for part, encoding in parts
+    )
+
+
+def _extract_body(msg: Message) -> str:
+    """Prefer text/plain, fall back to text/html, skipping attachments."""
+    if msg.is_multipart():
+        parts = list(msg.walk())
+        for content_type in ("text/plain", "text/html"):
+            for part in parts:
+                if part.get_content_type() == content_type and not part.get("Content-Disposition"):
+                    charset = part.get_content_charset() or "utf-8"
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        return payload.decode(charset, errors="replace")
+        return ""
+
+    charset = msg.get_content_charset() or "utf-8"
+    payload = msg.get_payload(decode=True)
+    return payload.decode(charset, errors="replace") if payload else ""
+
+
+def _credentials_for(provider: str) -> tuple[str, str]:
+    if provider == "gmail":
+        username, app_password = settings.gmail_user, settings.gmail_app_password
+    elif provider == "yahoo":
+        username, app_password = settings.yahoo_user, settings.yahoo_app_password
+    else:
+        raise ValueError(f"Unsupported provider '{provider}'. Use 'gmail' or 'yahoo'.")
+
+    if not username or not app_password:
+        env_prefix = provider.upper()
+        raise RuntimeError(
+            f"Missing credentials for '{provider}'. Set {env_prefix}_USER and "
+            f"{env_prefix}_APP_PASSWORD in your .env file (use an app password, "
+            "not your account login password)."
+        )
+    return username, app_password
+
+
+def fetch_recent_emails(provider: str, max_results: int = 10, mailbox: str = "INBOX") -> list[dict]:
+    """Fetch the most recent emails from Gmail or Yahoo Mail over IMAP.
+
+    Returns a list of dicts with keys: message_id, subject, sender, date, body.
+    Connects read-only; nothing is deleted or marked as read.
+    """
+    host = PROVIDER_HOSTS.get(provider)
+    if host is None:
+        raise ValueError(f"Unsupported provider '{provider}'. Use 'gmail' or 'yahoo'.")
+
+    username, app_password = _credentials_for(provider)
+
+    emails: list[dict] = []
+    with imaplib.IMAP4_SSL(host) as conn:
+        conn.login(username, app_password)
+        conn.select(mailbox, readonly=True)
+
+        _, data = conn.search(None, "ALL")
+        all_ids = data[0].split()
+        recent_ids = all_ids[-max_results:] if max_results else all_ids
+
+        for msg_id in reversed(recent_ids):
+            _, msg_data = conn.fetch(msg_id, "(RFC822)")
+            raw = msg_data[0][1]
+            msg = email.message_from_bytes(raw)
+
+            date_header = msg.get("Date")
+            try:
+                date_str = parsedate_to_datetime(date_header).isoformat() if date_header else ""
+            except (TypeError, ValueError):
+                date_str = date_header or ""
+
+            emails.append(
+                {
+                    "message_id": _decode_header_value(msg.get("Message-ID")) or msg_id.decode(),
+                    "subject": _decode_header_value(msg.get("Subject")),
+                    "sender": _decode_header_value(msg.get("From")),
+                    "date": date_str,
+                    "body": _extract_body(msg)[:_MAX_BODY_CHARS],
+                }
+            )
+
+    return emails
